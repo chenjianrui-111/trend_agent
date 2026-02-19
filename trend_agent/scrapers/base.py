@@ -4,7 +4,7 @@
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import aiohttp
 
@@ -29,7 +29,15 @@ class BaseScraper(ABC):
         return self._session
 
     @abstractmethod
-    async def scrape(self, query: Optional[str] = None, limit: int = 50) -> List[TrendItem]:
+    async def scrape(
+        self,
+        query: Optional[str] = None,
+        limit: int = 50,
+        capture_mode: str = "hybrid",
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+        sort_strategy: str = "hybrid",
+    ) -> List[TrendItem]:
         """抓取热门内容"""
         ...
 
@@ -42,3 +50,11 @@ class BaseScraper(ABC):
         if self._session and not self._session.closed:
             await self._session.close()
             self._session = None
+
+    def load_state(self, state: Dict[str, Any]) -> None:
+        """Load persisted scraper state. Default no-op."""
+        _ = state
+
+    def dump_state(self) -> Dict[str, Any]:
+        """Export scraper state for persistence. Default empty."""
+        return {}

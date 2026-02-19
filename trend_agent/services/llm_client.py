@@ -11,7 +11,7 @@ import random
 import re
 import time
 from abc import ABC, abstractmethod
-from typing import Any, AsyncGenerator, Dict, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import aiohttp
 
@@ -68,6 +68,15 @@ class LLMBackend(ABC):
     @abstractmethod
     async def health_check(self) -> Dict:
         ...
+
+    async def analyze_media(
+        self,
+        prompt: str,
+        media_urls: List[str],
+        max_tokens: int = 512,
+        **kwargs,
+    ) -> str:
+        raise LLMCallError("media analysis not supported by backend", retryable=False, fallback_eligible=True)
 
 
 class ZhipuBackend(LLMBackend):
@@ -164,6 +173,43 @@ class ZhipuBackend(LLMBackend):
             return {"status": "unhealthy", "error": "missing ZHIPU_API_KEY"}
         return {"status": "healthy", "backend": "zhipu", "model": self.model}
 
+    async def analyze_media(
+        self,
+        prompt: str,
+        media_urls: List[str],
+        max_tokens: int = 512,
+        **kwargs,
+    ) -> str:
+        if not self.api_key:
+            raise LLMCallError("zhipu api key missing", retryable=False)
+        if not media_urls:
+            return await self.generate_sync(prompt=prompt, max_tokens=max_tokens, **kwargs)
+        content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for url in media_urls:
+            content.append({"type": "image_url", "image_url": {"url": url}})
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": content}],
+            "temperature": kwargs.get("temperature", settings.llm.temperature),
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+        timeout = aiohttp.ClientTimeout(total=settings.llm.timeout_seconds)
+        session = await self._get_session()
+        async with session.post(
+            f"{self.base_url}/chat/completions",
+            json=payload, timeout=timeout, headers=self._headers(),
+        ) as resp:
+            if resp.status >= 400:
+                detail = await resp.text()
+                raise LLMCallError(
+                    f"zhipu media error status={resp.status}: {detail[:300]}",
+                    retryable=resp.status >= 500,
+                    fallback_eligible=resp.status != 401,
+                )
+            data = await resp.json(content_type=None)
+            return self._extract_text(data)
+
 
 class OpenAIBackend(LLMBackend):
     """OpenAI-compatible 后端 (OpenAI, DeepSeek, etc.)"""
@@ -253,6 +299,45 @@ class OpenAIBackend(LLMBackend):
             return {"status": "unhealthy", "error": "missing API key"}
         return {"status": "healthy", "backend": "openai", "model": self.model}
 
+    async def analyze_media(
+        self,
+        prompt: str,
+        media_urls: List[str],
+        max_tokens: int = 512,
+        **kwargs,
+    ) -> str:
+        if not self.api_key:
+            raise LLMCallError("openai api key missing", retryable=False)
+        if not media_urls:
+            return await self.generate_sync(prompt=prompt, max_tokens=max_tokens, **kwargs)
+        content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for url in media_urls:
+            content.append({"type": "image_url", "image_url": {"url": url}})
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": content}],
+            "temperature": kwargs.get("temperature", settings.llm.temperature),
+            "max_tokens": max_tokens,
+        }
+        timeout = aiohttp.ClientTimeout(total=settings.llm.timeout_seconds)
+        session = await self._get_session()
+        async with session.post(
+            f"{self.base_url}/chat/completions",
+            json=payload, timeout=timeout, headers=self._headers(),
+        ) as resp:
+            if resp.status >= 400:
+                detail = await resp.text()
+                raise LLMCallError(
+                    f"openai media error status={resp.status}: {detail[:300]}",
+                    retryable=resp.status >= 500,
+                    fallback_eligible=resp.status != 401,
+                )
+            data = await resp.json(content_type=None)
+            choices = data.get("choices", [])
+            if not choices:
+                return ""
+            return choices[0].get("message", {}).get("content", "")
+
 
 class OllamaBackend(LLMBackend):
     """Ollama 后端"""
@@ -323,6 +408,20 @@ class OllamaBackend(LLMBackend):
                 return {"status": "healthy", "backend": "ollama", "model": self.model}
         except Exception as e:
             return {"status": "unhealthy", "error": str(e)}
+
+    async def analyze_media(
+        self,
+        prompt: str,
+        media_urls: List[str],
+        max_tokens: int = 512,
+        **kwargs,
+    ) -> str:
+        joined = ", ".join(media_urls)
+        return await self.generate_sync(
+            prompt=f"{prompt}\nMedia URLs: {joined}",
+            max_tokens=max_tokens,
+            **kwargs,
+        )
 
 
 class LLMServiceClient:
@@ -406,6 +505,38 @@ class LLMServiceClient:
                     yield token
             else:
                 raise
+
+    async def analyze_media(
+        self,
+        prompt: str,
+        media_urls: List[str],
+        max_tokens: int = 512,
+        **kwargs,
+    ) -> str:
+        last_error: Optional[Exception] = None
+        for attempt in range(1, self._retry_max + 1):
+            try:
+                result = await self.backend.analyze_media(prompt, media_urls, max_tokens=max_tokens, **kwargs)
+                return clean_llm_response(result)
+            except LLMCallError as e:
+                last_error = e
+                if e.retryable and attempt < self._retry_max:
+                    delay = self._retry_delay * (2 ** (attempt - 1)) + random.uniform(0, 0.3)
+                    await asyncio.sleep(delay)
+                    continue
+                break
+            except Exception as e:
+                last_error = e
+                break
+
+        if self._fallback:
+            try:
+                result = await self._fallback.analyze_media(prompt, media_urls, max_tokens=max_tokens, **kwargs)
+                return clean_llm_response(result)
+            except Exception as fb_err:
+                logger.error("Fallback media analysis failed: %s", fb_err)
+
+        raise last_error or LLMCallError("LLM media analysis failed", retryable=False)
 
     async def health_check(self) -> Dict:
         return await self.backend.health_check()

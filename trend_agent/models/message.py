@@ -12,6 +12,8 @@ class TrendItem:
     """原始抓取的热门条目"""
     item_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     source_platform: str = ""       # twitter, youtube, weibo, bilibili, zhihu
+    source_channel: str = ""        # platform-specific channel, e.g. github_trending
+    source_type: str = ""           # content type, e.g. post/repository/release/video
     source_id: str = ""             # 平台原生 ID
     source_url: str = ""
     title: str = ""
@@ -20,11 +22,21 @@ class TrendItem:
     author_id: str = ""
     language: str = "zh"
     engagement_score: float = 0.0   # 综合互动分 (likes + shares + comments)
+    normalized_heat_score: float = 0.0  # 跨平台归一热度分(0-1)
+    heat_breakdown: Dict[str, float] = field(default_factory=dict)
     category: str = ""              # 由 CategorizerAgent 填充
     subcategory: str = ""
     confidence: float = 0.0         # 分类置信度
     tags: List[str] = field(default_factory=list)
+    hashtags: List[str] = field(default_factory=list)
+    mentions: List[str] = field(default_factory=list)
+    external_urls: List[str] = field(default_factory=list)
     media_urls: List[str] = field(default_factory=list)
+    media_assets: List[Dict[str, Any]] = field(default_factory=list)
+    multimodal: Dict[str, Any] = field(default_factory=dict)
+    normalized_text: str = ""
+    published_at: str = ""
+    platform_metrics: Dict[str, Any] = field(default_factory=dict)
     scraped_at: str = ""
     raw_data: Dict[str, Any] = field(default_factory=dict)
     content_hash: str = ""          # 内容去重 hash

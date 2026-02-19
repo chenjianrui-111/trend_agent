@@ -20,7 +20,15 @@ class WeiboScraper(BaseScraper):
     name = "weibo"
     HOT_SEARCH_URL = "https://weibo.com/ajax/side/hotSearch"
 
-    async def scrape(self, query: Optional[str] = None, limit: int = 50) -> List[TrendItem]:
+    async def scrape(
+        self,
+        query: Optional[str] = None,
+        limit: int = 50,
+        capture_mode: str = "hybrid",
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+        sort_strategy: str = "hybrid",
+    ) -> List[TrendItem]:
         session = await self._get_session()
         items: List[TrendItem] = []
 
@@ -46,6 +54,8 @@ class WeiboScraper(BaseScraper):
 
                 items.append(TrendItem(
                     source_platform="weibo",
+                    source_channel="weibo_hot_search",
+                    source_type="topic",
                     source_id=str(item.get("mid", f"weibo_{i}")),
                     source_url=f"https://s.weibo.com/weibo?q=%23{word}%23",
                     title=note,
@@ -54,6 +64,8 @@ class WeiboScraper(BaseScraper):
                     language="zh",
                     engagement_score=float(raw_hot),
                     tags=[f"#{word}#"],
+                    hashtags=[f"#{word}#"],
+                    platform_metrics={"raw_hot": raw_hot},
                     scraped_at=datetime.now(timezone.utc).isoformat(),
                     raw_data=item,
                     content_hash=content_hash(word),

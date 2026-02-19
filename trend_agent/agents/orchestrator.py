@@ -30,6 +30,7 @@ from trend_agent.models.state_machine import WorkflowState
 from trend_agent.observability import metrics as obs
 from trend_agent.services.llm_client import LLMServiceClient
 from trend_agent.services.content_store import ContentRepository
+from trend_agent.services.parse_service import ParseService
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,11 @@ class PipelineState(TypedDict, total=False):
     generate_video: bool
     video_provider: str
     max_items: int
+    query: str
+    capture_mode: str
+    start_time: str
+    end_time: str
+    sort_strategy: str
     trigger_type: str
 
     raw_items: List[Dict]
@@ -72,7 +78,8 @@ class TrendOrchestrator:
     def __init__(self):
         self._llm = LLMServiceClient()
         self._content_store = ContentRepository()
-        self._scraper_agent = ScraperAgent()
+        self._scraper_agent = ScraperAgent(self._llm, content_store=self._content_store)
+        self._parse_service = ParseService(self._content_store, self._llm)
         self._categorizer_agent = CategorizerAgent(self._llm)
         self._summarizer_agent = SummarizerAgent(self._llm)
         self._quality_agent = QualityAgent(self._llm)
@@ -89,16 +96,22 @@ class TrendOrchestrator:
         try:
             from trend_agent.agents.video_agent import VideoAgent
             self._video_agent = VideoAgent(self._llm)
+            await self._video_agent.startup()
         except ImportError:
             logger.info("VideoAgent not available")
         try:
             from trend_agent.agents.publisher_agent import PublisherAgent
             self._publisher_agent = PublisherAgent()
+            await self._publisher_agent.startup()
         except ImportError:
             logger.info("PublisherAgent not available")
 
     async def shutdown(self):
         await self._scraper_agent.shutdown()
+        if self._video_agent:
+            await self._video_agent.shutdown()
+        if self._publisher_agent:
+            await self._publisher_agent.shutdown()
         await self._llm.close()
         await self._content_store.close()
 
@@ -140,15 +153,35 @@ class TrendOrchestrator:
         start = time.perf_counter()
         msg = AgentMessage(payload={
             "sources": state.get("sources", []),
+            "query": state.get("query"),
             "limit": state.get("max_items", 50),
+            "capture_mode": state.get("capture_mode", "hybrid"),
+            "start_time": state.get("start_time"),
+            "end_time": state.get("end_time"),
+            "sort_strategy": state.get("sort_strategy", "hybrid"),
         }, trace_id=state.get("trace_id", ""))
         result = await self._scraper_agent(msg)
         items = result.payload.get("items", [])
 
         # Persist sources to DB
         for item in items:
-            await self._content_store.upsert_source({
+            enriched_raw = item.get("raw_data", {}) or {}
+            enriched_raw["_normalized"] = {
+                "normalized_text": item.get("normalized_text", ""),
+                "hashtags": item.get("hashtags", []),
+                "mentions": item.get("mentions", []),
+                "external_urls": item.get("external_urls", []),
+                "media_assets": item.get("media_assets", []),
+                "multimodal": item.get("multimodal", {}),
+                "normalized_heat_score": item.get("normalized_heat_score", 0.0),
+                "heat_breakdown": item.get("heat_breakdown", {}),
+                "published_at": item.get("published_at", ""),
+                "platform_metrics": item.get("platform_metrics", {}),
+            }
+            source_row_id = await self._content_store.upsert_source({
                 "source_platform": item.get("source_platform"),
+                "source_channel": item.get("source_channel") or item.get("source_platform", ""),
+                "source_type": item.get("source_type") or "post",
                 "source_id": item.get("source_id"),
                 "source_url": item.get("source_url", ""),
                 "title": item.get("title", ""),
@@ -157,9 +190,29 @@ class TrendOrchestrator:
                 "author_id": item.get("author_id", ""),
                 "language": item.get("language", "zh"),
                 "engagement_score": item.get("engagement_score", 0),
-                "raw_data": item.get("raw_data", {}),
+                "normalized_heat_score": item.get("normalized_heat_score", 0.0),
+                "heat_breakdown": item.get("heat_breakdown", {}),
+                "capture_mode": state.get("capture_mode", "hybrid"),
+                "sort_strategy": state.get("sort_strategy", "hybrid"),
+                "published_at": item.get("published_at", ""),
+                "source_updated_at": item.get("published_at", ""),
+                "normalized_text": item.get("normalized_text", ""),
+                "hashtags": item.get("hashtags", []),
+                "mentions": item.get("mentions", []),
+                "external_urls": item.get("external_urls", []),
+                "media_urls": item.get("media_urls", []),
+                "media_assets": item.get("media_assets", []),
+                "multimodal": item.get("multimodal", {}),
+                "platform_metrics": item.get("platform_metrics", {}),
+                "pipeline_run_id": state.get("pipeline_id", ""),
+                "raw_data": enriched_raw,
+                "scraped_at": item.get("scraped_at", ""),
                 "content_hash": item.get("content_hash", ""),
             })
+            try:
+                await self._parse_service.parse_source_by_row_id(source_row_id)
+            except Exception as e:
+                logger.warning("parse stage failed for source_row_id=%s: %s", source_row_id, e)
 
         return {
             "raw_items": items,
@@ -322,6 +375,11 @@ class TrendOrchestrator:
         generate_video: bool = False,
         video_provider: str = "",
         max_items: int = 50,
+        query: str = "",
+        capture_mode: str = "hybrid",
+        start_time: str = "",
+        end_time: str = "",
+        sort_strategy: str = "hybrid",
         trigger_type: str = "manual",
     ) -> str:
         """Run the full pipeline. Returns pipeline_run_id."""
@@ -337,6 +395,11 @@ class TrendOrchestrator:
             "generate_video": generate_video,
             "video_provider": video_provider,
             "max_items": max_items,
+            "query": query,
+            "capture_mode": capture_mode,
+            "start_time": start_time,
+            "end_time": end_time,
+            "sort_strategy": sort_strategy,
             "trigger_type": trigger_type,
             "raw_items": [],
             "categorized_items": [],
@@ -360,6 +423,11 @@ class TrendOrchestrator:
                 "target_platforms": target_platforms or ["wechat"],
                 "generate_video": generate_video,
                 "max_items": max_items,
+                "query": query,
+                "capture_mode": capture_mode,
+                "start_time": start_time,
+                "end_time": end_time,
+                "sort_strategy": sort_strategy,
             },
             "status": "running",
         })

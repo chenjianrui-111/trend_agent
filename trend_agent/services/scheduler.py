@@ -69,8 +69,13 @@ class PipelineScheduler:
             logger.info("Scheduled pipeline starting: %s", config.get("name"))
             await self._orchestrator.run_pipeline(
                 sources=config.get("sources", ["twitter", "youtube"]),
+                query=config.get("query", ""),
                 categories_filter=config.get("categories", []),
                 target_platforms=config.get("target_platforms", ["wechat"]),
+                capture_mode=config.get("capture_mode", "hybrid"),
+                start_time=config.get("start_time", ""),
+                end_time=config.get("end_time", ""),
+                sort_strategy=config.get("sort_strategy", "hybrid"),
                 generate_video=config.get("generate_video", False),
                 video_provider=config.get("video_provider", ""),
                 trigger_type="cron",

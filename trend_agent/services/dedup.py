@@ -4,7 +4,7 @@
 
 import hashlib
 import re
-from typing import Set
+from typing import Iterable, Set
 
 
 def _tokenize(text: str) -> list[str]:
@@ -50,6 +50,14 @@ def content_hash(text: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
 
 
+def media_hash(media_urls: Iterable[str]) -> str:
+    normalized = [re.sub(r"\s+", "", (u or "").strip().lower()) for u in media_urls if u]
+    if not normalized:
+        return ""
+    combined = "|".join(sorted(set(normalized)))
+    return hashlib.sha256(combined.encode("utf-8")).hexdigest()[:16]
+
+
 class DedupService:
     """内容去重服务"""
 
@@ -57,12 +65,17 @@ class DedupService:
         self._threshold = threshold  # hamming distance threshold
         self._hashes: Set[int] = set()
         self._content_hashes: Set[str] = set()
+        self._media_hashes: Set[str] = set()
 
-    def is_duplicate(self, text: str) -> bool:
+    def is_duplicate(self, text: str, media_urls: Iterable[str] = ()) -> bool:
         """检查内容是否与已有内容重复"""
         # 精确去重
         c_hash = content_hash(text)
         if c_hash in self._content_hashes:
+            return True
+
+        m_hash = media_hash(media_urls)
+        if m_hash and m_hash in self._media_hashes:
             return True
 
         # 近似去重
@@ -73,18 +86,22 @@ class DedupService:
 
         return False
 
-    def add(self, text: str):
+    def add(self, text: str, media_urls: Iterable[str] = ()):
         """添加内容到去重集合"""
         self._content_hashes.add(content_hash(text))
         self._hashes.add(simhash(text))
+        m_hash = media_hash(media_urls)
+        if m_hash:
+            self._media_hashes.add(m_hash)
 
-    def check_and_add(self, text: str) -> bool:
+    def check_and_add(self, text: str, media_urls: Iterable[str] = ()) -> bool:
         """检查并添加，返回是否重复"""
-        if self.is_duplicate(text):
+        if self.is_duplicate(text, media_urls):
             return True
-        self.add(text)
+        self.add(text, media_urls)
         return False
 
     def clear(self):
         self._hashes.clear()
         self._content_hashes.clear()
+        self._media_hashes.clear()

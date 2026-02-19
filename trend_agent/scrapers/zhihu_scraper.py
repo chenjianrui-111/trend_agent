@@ -19,7 +19,15 @@ class ZhihuScraper(BaseScraper):
     name = "zhihu"
     HOT_URL = "https://www.zhihu.com/api/v3/feed/topstory/hot-lists/total"
 
-    async def scrape(self, query: Optional[str] = None, limit: int = 50) -> List[TrendItem]:
+    async def scrape(
+        self,
+        query: Optional[str] = None,
+        limit: int = 50,
+        capture_mode: str = "hybrid",
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+        sort_strategy: str = "hybrid",
+    ) -> List[TrendItem]:
         session = await self._get_session()
         items: List[TrendItem] = []
         headers = {
@@ -47,9 +55,15 @@ class ZhihuScraper(BaseScraper):
                     score = 0.0
 
                 question_id = str(target.get("id", ""))
+                created_epoch = target.get("created")
+                published_at = ""
+                if isinstance(created_epoch, (int, float)) and created_epoch > 0:
+                    published_at = datetime.fromtimestamp(created_epoch, tz=timezone.utc).isoformat()
 
                 items.append(TrendItem(
                     source_platform="zhihu",
+                    source_channel="zhihu_hot_list",
+                    source_type="question",
                     source_id=question_id,
                     source_url=f"https://www.zhihu.com/question/{question_id}",
                     title=title,
@@ -57,6 +71,8 @@ class ZhihuScraper(BaseScraper):
                     author=target.get("author", {}).get("name", "知乎"),
                     language="zh",
                     engagement_score=score,
+                    published_at=published_at,
+                    platform_metrics={"hot_score_raw": hot_score},
                     scraped_at=datetime.now(timezone.utc).isoformat(),
                     raw_data=item,
                     content_hash=content_hash(title + excerpt),

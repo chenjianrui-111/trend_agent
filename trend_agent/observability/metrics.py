@@ -34,6 +34,22 @@ try:
         ["source"],
         buckets=[0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0],
     )
+    SCRAPE_REQUESTS = Counter(
+        "trend_agent_scrape_requests_total", "Scrape request outcomes",
+        ["source", "outcome"],
+    )
+    SCRAPE_HTTP_STATUS = Counter(
+        "trend_agent_scrape_http_status_total", "Scrape upstream HTTP status classes",
+        ["source", "status_class"],
+    )
+    SCRAPE_ITEMS = Counter(
+        "trend_agent_scrape_items_total", "Scraped items count",
+        ["source"],
+    )
+    SCRAPE_COST_UNITS = Counter(
+        "trend_agent_scrape_cost_units_total", "Scrape cost units",
+        ["source", "unit"],
+    )
 
     CATEGORIZE_COUNT = Counter(
         "trend_agent_categorize_total", "Categorization count",
@@ -93,6 +109,44 @@ def record_scrape(source: str, status: str, latency: float = 0.0):
         SCRAPE_COUNT.labels(source=source, status=status).inc()
         if latency > 0:
             SCRAPE_LATENCY.labels(source=source).observe(latency)
+
+
+def record_scrape_request(source: str, outcome: str):
+    if _METRICS_AVAILABLE:
+        SCRAPE_REQUESTS.labels(source=source, outcome=outcome).inc()
+
+
+def record_scrape_http_status(source: str, status_code: int):
+    if not _METRICS_AVAILABLE:
+        return
+    code = int(status_code)
+    if code == 429:
+        status_class = "429"
+    elif 500 <= code < 600:
+        status_class = "5xx"
+    elif 400 <= code < 500:
+        status_class = "4xx"
+    elif 200 <= code < 300:
+        status_class = "2xx"
+    elif 300 <= code < 400:
+        status_class = "3xx"
+    else:
+        status_class = "other"
+    SCRAPE_HTTP_STATUS.labels(source=source, status_class=status_class).inc()
+
+
+def record_scrape_items(source: str, count: int):
+    if _METRICS_AVAILABLE and count > 0:
+        SCRAPE_ITEMS.labels(source=source).inc(int(count))
+
+
+def record_scrape_cost(source: str, request_units: float = 0.0, item_units: float = 0.0):
+    if not _METRICS_AVAILABLE:
+        return
+    if request_units > 0:
+        SCRAPE_COST_UNITS.labels(source=source, unit="request").inc(float(request_units))
+    if item_units > 0:
+        SCRAPE_COST_UNITS.labels(source=source, unit="item").inc(float(item_units))
 
 
 def record_categorize(category: str):

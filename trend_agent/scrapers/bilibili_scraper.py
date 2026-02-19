@@ -21,7 +21,15 @@ class BilibiliScraper(BaseScraper):
     HOT_URL = "https://api.bilibili.com/x/web-interface/popular"
     SEARCH_URL = "https://api.bilibili.com/x/web-interface/search/type"
 
-    async def scrape(self, query: Optional[str] = None, limit: int = 50) -> List[TrendItem]:
+    async def scrape(
+        self,
+        query: Optional[str] = None,
+        limit: int = 50,
+        capture_mode: str = "hybrid",
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+        sort_strategy: str = "hybrid",
+    ) -> List[TrendItem]:
         session = await self._get_session()
         items: List[TrendItem] = []
         headers = {
@@ -41,9 +49,11 @@ class BilibiliScraper(BaseScraper):
                     "order": "totalrank",
                 }
                 url = self.SEARCH_URL
+                source_channel = "bilibili_search"
             else:
                 params = {"ps": min(limit, 50), "pn": 1}
                 url = self.HOT_URL
+                source_channel = "bilibili_popular"
 
             async with session.get(url, headers=headers, params=params) as resp:
                 if resp.status != 200:
@@ -70,9 +80,17 @@ class BilibiliScraper(BaseScraper):
                 title = video.get("title", "")
                 desc = video.get("desc", video.get("description", ""))
                 bvid = video.get("bvid", "")
+                pub_epoch = video.get("pubdate")
+                published_at = ""
+                if isinstance(pub_epoch, (int, float)) and pub_epoch > 0:
+                    published_at = datetime.fromtimestamp(pub_epoch, tz=timezone.utc).isoformat()
+                pic = video.get("pic", "")
+                media_urls = [pic] if pic else []
 
                 items.append(TrendItem(
                     source_platform="bilibili",
+                    source_channel=source_channel,
+                    source_type="video",
                     source_id=bvid or str(video.get("aid", "")),
                     source_url=f"https://www.bilibili.com/video/{bvid}" if bvid else "",
                     title=title,
@@ -81,7 +99,13 @@ class BilibiliScraper(BaseScraper):
                     author_id=str(video.get("owner", {}).get("mid", video.get("mid", ""))),
                     language="zh",
                     engagement_score=float(engagement),
-                    media_urls=[video.get("pic", "")],
+                    media_urls=media_urls,
+                    published_at=published_at,
+                    platform_metrics={
+                        "view_count": views,
+                        "like_count": likes,
+                        "comment_count": comments,
+                    },
                     scraped_at=datetime.now(timezone.utc).isoformat(),
                     raw_data=video,
                     content_hash=content_hash(title + desc),

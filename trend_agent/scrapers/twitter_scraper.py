@@ -25,7 +25,15 @@ class TwitterScraper(BaseScraper):
             "Authorization": f"Bearer {settings.scraper.twitter_bearer_token}",
         }
 
-    async def scrape(self, query: Optional[str] = None, limit: int = 50) -> List[TrendItem]:
+    async def scrape(
+        self,
+        query: Optional[str] = None,
+        limit: int = 50,
+        capture_mode: str = "hybrid",
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+        sort_strategy: str = "hybrid",
+    ) -> List[TrendItem]:
         if not settings.scraper.twitter_bearer_token:
             logger.warning("Twitter bearer token not configured, skipping")
             return []
@@ -42,6 +50,10 @@ class TwitterScraper(BaseScraper):
             "expansions": "author_id",
             "user.fields": "name,username",
         }
+        if start_time:
+            params["start_time"] = start_time
+        if end_time:
+            params["end_time"] = end_time
 
         try:
             async with session.get(
@@ -82,6 +94,8 @@ class TwitterScraper(BaseScraper):
 
                 items.append(TrendItem(
                     source_platform="twitter",
+                    source_channel="twitter_recent",
+                    source_type="post",
                     source_id=tweet["id"],
                     source_url=f"https://twitter.com/i/web/status/{tweet['id']}",
                     title=text[:100],
@@ -90,6 +104,8 @@ class TwitterScraper(BaseScraper):
                     author_id=tweet.get("author_id", ""),
                     language=tweet.get("lang", "en"),
                     engagement_score=float(engagement),
+                    published_at=tweet.get("created_at", ""),
+                    platform_metrics=metrics,
                     scraped_at=datetime.now(timezone.utc).isoformat(),
                     raw_data=tweet,
                     content_hash=content_hash(text),

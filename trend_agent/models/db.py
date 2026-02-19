@@ -29,6 +29,8 @@ class TrendSource(Base):
 
     id = Column(String(64), primary_key=True, default=_uuid)
     source_platform = Column(String(32), nullable=False)
+    source_channel = Column(String(64), default="")
+    source_type = Column(String(32), default="")
     source_id = Column(String(256), nullable=False)
     source_url = Column(String(1024), default="")
     title = Column(Text, default="")
@@ -37,8 +39,33 @@ class TrendSource(Base):
     author_id = Column(String(256), default="")
     language = Column(String(8), default="zh")
     engagement_score = Column(Float, default=0.0)
+    normalized_heat_score = Column(Float, default=0.0)
+    heat_breakdown = Column(JSON, default=dict)
+    capture_mode = Column(String(16), default="hybrid")
+    sort_strategy = Column(String(16), default="hybrid")
+    published_at = Column(DateTime)
+    source_updated_at = Column(DateTime, index=True)
+    normalized_text = Column(Text, default="")
+    hashtags = Column(JSON, default=list)
+    mentions = Column(JSON, default=list)
+    external_urls = Column(JSON, default=list)
+    media_urls = Column(JSON, default=list)
+    media_assets = Column(JSON, default=list)
+    multimodal = Column(JSON, default=dict)
+    platform_metrics = Column(JSON, default=dict)
+    parse_status = Column(String(16), default="pending")
+    parse_payload = Column(JSON, default=dict)
+    parse_schema_version = Column(String(16), default="")
+    parse_confidence = Column(Float, default=0.0)
+    parse_attempts = Column(Integer, default=0)
+    parse_error_kind = Column(String(16), default="")
+    parse_last_error = Column(Text, default="")
+    parse_retry_at = Column(DateTime)
+    parsed_at = Column(DateTime)
+    pipeline_run_id = Column(String(64), default="")
     raw_data = Column(JSON, default=dict)
     scraped_at = Column(DateTime, nullable=False, default=_utcnow)
+    last_seen_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
     content_hash = Column(String(64), index=True, default="")
 
     __table_args__ = (
@@ -111,6 +138,62 @@ class PipelineRun(Base):
     timing = Column(JSON, default=dict)
 
 
+class SourceIngestRecord(Base):
+    __tablename__ = "source_ingest_records"
+
+    id = Column(String(64), primary_key=True, default=_uuid)
+    source_platform = Column(String(32), nullable=False)
+    source_id = Column(String(256), nullable=False)
+    source_updated_at = Column(DateTime)
+    idempotency_key = Column(String(256), nullable=False, unique=True, index=True)
+    first_seen_at = Column(DateTime, nullable=False, default=_utcnow)
+
+
+class ScraperState(Base):
+    __tablename__ = "scraper_states"
+
+    source = Column(String(64), primary_key=True)
+    state = Column(JSON, default=dict)
+    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
+
+
+class ParseCache(Base):
+    __tablename__ = "parse_cache"
+
+    id = Column(String(64), primary_key=True, default=_uuid)
+    content_hash = Column(String(64), nullable=False, index=True)
+    schema_version = Column(String(16), nullable=False, index=True)
+    parse_payload = Column(JSON, default=dict)
+    parse_confidence = Column(Float, default=0.0)
+    hit_count = Column(Integer, default=0)
+    created_at = Column(DateTime, nullable=False, default=_utcnow)
+    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
+
+    __table_args__ = (
+        Index("ix_parse_cache_hash_schema", "content_hash", "schema_version", unique=True),
+    )
+
+
+class ParseDeadLetter(Base):
+    __tablename__ = "parse_dead_letters"
+
+    id = Column(String(64), primary_key=True, default=_uuid)
+    source_row_id = Column(String(64), nullable=False, index=True)
+    source_platform = Column(String(32), nullable=False)
+    source_id = Column(String(256), nullable=False)
+    content_hash = Column(String(64), default="")
+    schema_version = Column(String(16), default="")
+    error_kind = Column(String(16), default="")
+    error_code = Column(String(32), default="")
+    error_message = Column(Text, default="")
+    retryable = Column(Boolean, default=False)
+    attempts = Column(Integer, default=0)
+    status = Column(String(16), default="pending", index=True)  # pending/replayed/resolved
+    payload_snapshot = Column(JSON, default=dict)
+    created_at = Column(DateTime, nullable=False, default=_utcnow)
+    replayed_at = Column(DateTime)
+
+
 class ScheduleConfig(Base):
     __tablename__ = "schedule_configs"
 
@@ -118,8 +201,13 @@ class ScheduleConfig(Base):
     name = Column(String(128), nullable=False, unique=True)
     cron_expression = Column(String(64), nullable=False)
     sources = Column(JSON, nullable=False)
+    query = Column(String(256), default="")
     categories = Column(JSON, default=list)
     target_platforms = Column(JSON, nullable=False)
+    capture_mode = Column(String(16), default="hybrid")
+    sort_strategy = Column(String(16), default="hybrid")
+    start_time = Column(String(64), default="")
+    end_time = Column(String(64), default="")
     generate_video = Column(Boolean, default=False)
     video_provider = Column(String(32), default="")
     enabled = Column(Boolean, default=True)

@@ -9,7 +9,7 @@ import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -25,21 +25,31 @@ from trend_agent.api.skeleton import router as skeleton_router
 from trend_agent.observability import metrics as obs
 from trend_agent.services.content_store import ContentRepository
 from trend_agent.services.llm_client import LLMServiceClient
+from trend_agent.services.parse_service import ParseService
+from trend_agent.services.scheduler import PipelineScheduler
+from trend_agent.agents.orchestrator import get_orchestrator
 
 logger = logging.getLogger(__name__)
 
 # Global singletons
 content_store = ContentRepository()
 llm_client = LLMServiceClient()
+parse_service = ParseService(content_store=content_store, llm_client=llm_client)
+orchestrator = get_orchestrator()
+pipeline_scheduler = PipelineScheduler()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("TrendAgent starting up")
     await content_store.init_db()
+    await orchestrator.startup()
+    await pipeline_scheduler.start(orchestrator=orchestrator, content_store=content_store)
     obs.set_app_info(settings.app_name, app.version, settings.env)
     yield
     logger.info("TrendAgent shutting down")
+    await pipeline_scheduler.stop()
+    await orchestrator.shutdown()
     await llm_client.close()
     await content_store.close()
 
@@ -101,8 +111,13 @@ class LoginResponse(BaseModel):
 
 class PipelineRunRequest(BaseModel):
     sources: List[str] = Field(default_factory=lambda: ["twitter", "youtube"])
+    query: str = ""
     categories_filter: List[str] = Field(default_factory=list)
     target_platforms: List[str] = Field(default_factory=lambda: ["wechat", "xiaohongshu"])
+    capture_mode: Literal["by_time", "by_hot", "hybrid"] = "hybrid"
+    sort_strategy: Literal["engagement", "recency", "hybrid"] = "hybrid"
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
     generate_video: bool = False
     video_provider: str = ""
     max_items: int = 50
@@ -125,15 +140,43 @@ class ScheduleCreateRequest(BaseModel):
     name: str = Field(..., min_length=1)
     cron_expression: str = Field(..., min_length=5)
     sources: List[str] = Field(default_factory=lambda: ["twitter", "youtube"])
+    query: str = ""
     categories: List[str] = Field(default_factory=list)
     target_platforms: List[str] = Field(default_factory=lambda: ["wechat"])
+    capture_mode: Literal["by_time", "by_hot", "hybrid"] = "hybrid"
+    sort_strategy: Literal["engagement", "recency", "hybrid"] = "hybrid"
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
     generate_video: bool = False
     video_provider: str = ""
+
+
+class ScheduleUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1)
+    cron_expression: Optional[str] = Field(default=None, min_length=5)
+    sources: Optional[List[str]] = None
+    query: Optional[str] = None
+    categories: Optional[List[str]] = None
+    target_platforms: Optional[List[str]] = None
+    capture_mode: Optional[Literal["by_time", "by_hot", "hybrid"]] = None
+    sort_strategy: Optional[Literal["engagement", "recency", "hybrid"]] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    generate_video: Optional[bool] = None
+    video_provider: Optional[str] = None
+    enabled: Optional[bool] = None
 
 
 class VideoGenerateRequest(BaseModel):
     draft_id: str
     provider: str = ""
+
+
+class ParseRunRequest(BaseModel):
+    limit: int = Field(default=20, ge=1, le=200)
+    platform: Optional[str] = None
+    parse_statuses: List[str] = Field(default_factory=lambda: ["pending", "delayed"])
+    force: bool = False
 
 
 # ===================================================================
@@ -234,6 +277,41 @@ async def list_sources(
     return await content_store.list_sources(platform=platform, limit=limit, offset=offset)
 
 
+@app.post("/api/v1/parse/run")
+async def run_parse(
+    req: ParseRunRequest,
+    auth: AuthContext = Depends(get_auth_context),
+):
+    return await parse_service.parse_pending_sources(
+        limit=req.limit,
+        platform=req.platform,
+        parse_statuses=req.parse_statuses,
+        force=req.force,
+    )
+
+
+@app.get("/api/v1/parse/dlq")
+async def list_parse_dlq(
+    status: Optional[str] = "pending",
+    limit: int = 50,
+    offset: int = 0,
+    auth: AuthContext = Depends(get_auth_context),
+):
+    return await content_store.list_parse_dead_letters(status=status, limit=limit, offset=offset)
+
+
+@app.post("/api/v1/parse/dlq/{dlq_id}/replay")
+async def replay_parse_dlq(
+    dlq_id: str,
+    auth: AuthContext = Depends(get_auth_context),
+):
+    row = await content_store.get_parse_dead_letter(dlq_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="DLQ record not found")
+    result = await parse_service.replay_dead_letter(dlq_id)
+    return {"success": True, "dlq_id": dlq_id, "result": result}
+
+
 # ===================================================================
 # Pipeline Endpoints (stubs - implemented in Phase 4)
 # ===================================================================
@@ -241,13 +319,15 @@ async def list_sources(
 @app.post("/api/v1/pipeline/run")
 async def run_pipeline(req: PipelineRunRequest, auth: AuthContext = Depends(get_auth_context)):
     """Trigger the full scrape -> categorize -> summarize -> publish pipeline."""
-    # Will be implemented with TrendOrchestrator in Phase 4
-    from trend_agent.agents.orchestrator import get_orchestrator
-    orchestrator = get_orchestrator()
     run_id = await orchestrator.run_pipeline(
         sources=req.sources,
+        query=req.query,
         categories_filter=req.categories_filter,
         target_platforms=req.target_platforms,
+        capture_mode=req.capture_mode,
+        start_time=req.start_time or "",
+        end_time=req.end_time or "",
+        sort_strategy=req.sort_strategy,
         generate_video=req.generate_video,
         video_provider=req.video_provider,
         max_items=req.max_items,
@@ -301,13 +381,68 @@ async def list_schedules(auth: AuthContext = Depends(get_auth_context)):
 
 @app.post("/api/v1/schedules")
 async def create_schedule(req: ScheduleCreateRequest, auth: AuthContext = Depends(get_auth_context)):
-    schedule_id = await content_store.save_schedule(req.model_dump())
+    payload = req.model_dump()
+    schedule_id = await content_store.save_schedule(payload)
+    pipeline_scheduler.add_schedule({"id": schedule_id, **payload})
     return {"success": True, "schedule_id": schedule_id}
+
+
+@app.put("/api/v1/schedules/{schedule_id}")
+async def update_schedule(
+    schedule_id: str,
+    req: ScheduleUpdateRequest,
+    auth: AuthContext = Depends(get_auth_context),
+):
+    existing = await content_store.get_schedule(schedule_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+
+    updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No updates provided")
+
+    await content_store.update_schedule(schedule_id, updates)
+    refreshed = await content_store.get_schedule(schedule_id)
+    if not refreshed:
+        raise HTTPException(status_code=404, detail="Schedule not found after update")
+
+    pipeline_scheduler.remove_schedule(schedule_id)
+    if refreshed.get("enabled", True):
+        pipeline_scheduler.add_schedule(refreshed)
+
+    return {"success": True, "schedule_id": schedule_id, "schedule": refreshed}
+
+
+@app.patch("/api/v1/schedules/{schedule_id}/enable")
+async def toggle_schedule_enable(
+    schedule_id: str,
+    auth: AuthContext = Depends(get_auth_context),
+):
+    existing = await content_store.get_schedule(schedule_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+
+    target_enabled = not bool(existing.get("enabled", True))
+    await content_store.update_schedule(schedule_id, {"enabled": target_enabled})
+    refreshed = await content_store.get_schedule(schedule_id)
+    if not refreshed:
+        raise HTTPException(status_code=404, detail="Schedule not found after update")
+
+    pipeline_scheduler.remove_schedule(schedule_id)
+    if refreshed.get("enabled", True):
+        pipeline_scheduler.add_schedule(refreshed)
+
+    return {
+        "success": True,
+        "schedule_id": schedule_id,
+        "enabled": bool(refreshed.get("enabled", False)),
+    }
 
 
 @app.delete("/api/v1/schedules/{schedule_id}")
 async def delete_schedule(schedule_id: str, auth: AuthContext = Depends(get_auth_context)):
     await content_store.delete_schedule(schedule_id)
+    pipeline_scheduler.remove_schedule(schedule_id)
     return {"success": True}
 
 

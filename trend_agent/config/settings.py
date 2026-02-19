@@ -91,6 +91,13 @@ def _load_source_rps() -> Dict[str, float]:
     return out
 
 
+def _load_csv_list(env_name: str) -> List[str]:
+    raw = os.getenv(env_name, "").strip()
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
 @dataclass
 class ScraperConfig:
     """数据抓取配置"""
@@ -134,6 +141,10 @@ class PublisherConfig:
     weibo_publish_token: str = os.getenv("WEIBO_PUBLISH_TOKEN", "")
     publish_retry_max: int = int(os.getenv("PUBLISH_RETRY_MAX", "3"))
     publish_retry_delay_seconds: float = float(os.getenv("PUBLISH_RETRY_DELAY", "5"))
+    gate_enabled: bool = os.getenv("PUBLISH_GATE_ENABLED", "true").lower() == "true"
+    gate_min_quality_score: float = float(os.getenv("PUBLISH_GATE_MIN_QUALITY_SCORE", "0.65"))
+    gate_min_compliance_score: float = float(os.getenv("PUBLISH_GATE_MIN_COMPLIANCE_SCORE", "0.70"))
+    gate_max_repeat_ratio: float = float(os.getenv("PUBLISH_GATE_MAX_REPEAT_RATIO", "0.92"))
 
 
 @dataclass
@@ -262,6 +273,18 @@ class ParseConfig:
 
 
 @dataclass
+class GenerationConfig:
+    """生成阶段配置"""
+    stage_timeout_seconds: float = float(os.getenv("GEN_STAGE_TIMEOUT_SECONDS", "25"))
+    max_tokens: int = int(os.getenv("GEN_MAX_TOKENS", "2048"))
+    self_repair_max_attempts: int = int(os.getenv("GEN_SELF_REPAIR_MAX_ATTEMPTS", "2"))
+    min_quality_score: float = float(os.getenv("GEN_MIN_QUALITY_SCORE", "0.60"))
+    min_compliance_score: float = float(os.getenv("GEN_MIN_COMPLIANCE_SCORE", "0.70"))
+    max_repeat_ratio: float = float(os.getenv("GEN_MAX_REPEAT_RATIO", "0.96"))
+    banned_words: List[str] = field(default_factory=lambda: _load_csv_list("GEN_BANNED_WORDS"))
+
+
+@dataclass
 class AuthConfig:
     """认证配置"""
     jwt_secret: str = os.getenv("JWT_SECRET", "trend-agent-jwt-secret-change-in-production")
@@ -297,6 +320,7 @@ class AppConfig:
     multimodal: MultiModalConfig = field(default_factory=MultiModalConfig)
     heat_score: HeatScoreConfig = field(default_factory=HeatScoreConfig)
     parse: ParseConfig = field(default_factory=ParseConfig)
+    generation: GenerationConfig = field(default_factory=GenerationConfig)
     auth: AuthConfig = field(default_factory=AuthConfig)
     orchestration: OrchestrationConfig = field(default_factory=OrchestrationConfig)
 

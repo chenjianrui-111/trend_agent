@@ -66,6 +66,8 @@ class QualityResult:
     """质量检查结果"""
     passed: bool = True
     overall_score: float = 0.0
+    compliance_score: float = 0.0
+    repetition_ratio: float = 0.0
     sensitive_words: List[str] = field(default_factory=list)
     compliance_issues: List[str] = field(default_factory=list)
     originality_score: float = 1.0

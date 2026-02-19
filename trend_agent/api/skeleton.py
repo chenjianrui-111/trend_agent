@@ -94,6 +94,20 @@ async def capabilities() -> Dict[str, Any]:
             "low_confidence_threshold": settings.parse.low_confidence_threshold,
             "recoverable_max_attempts": settings.parse.recoverable_max_attempts,
         },
+        "generation": {
+            "stage_timeout_seconds": settings.generation.stage_timeout_seconds,
+            "self_repair_max_attempts": settings.generation.self_repair_max_attempts,
+            "min_quality_score": settings.generation.min_quality_score,
+            "min_compliance_score": settings.generation.min_compliance_score,
+            "max_repeat_ratio": settings.generation.max_repeat_ratio,
+            "banned_words_count": len(settings.generation.banned_words),
+        },
+        "publish_gate": {
+            "enabled": settings.publisher.gate_enabled,
+            "min_quality_score": settings.publisher.gate_min_quality_score,
+            "min_compliance_score": settings.publisher.gate_min_compliance_score,
+            "max_repeat_ratio": settings.publisher.gate_max_repeat_ratio,
+        },
         "scheduler": {
             "enabled": settings.scheduler.enabled,
             "timezone": settings.scheduler.timezone,

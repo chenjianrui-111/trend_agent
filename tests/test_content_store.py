@@ -195,6 +195,55 @@ async def test_draft_crud(repo):
 
 
 @pytest.mark.asyncio
+async def test_draft_versioning_and_rollback(repo):
+    draft_id = await repo.save_draft({
+        "source_id": "src_v1",
+        "target_platform": "wechat",
+        "title": "v1 title",
+        "body": "v1 body content",
+        "summary": "v1 summary",
+        "status": "summarized",
+    })
+    v1 = await repo.create_draft_version(
+        draft_id=draft_id,
+        data={
+            "title": "v1 title",
+            "body": "v1 body content",
+            "summary": "v1 summary",
+            "hashtags": ["#v1"],
+            "generation_meta": {"model": "m1"},
+            "output_hash": "h_v1",
+        },
+    )
+    assert v1 == 1
+
+    await repo.update_draft(draft_id, {"title": "v2 title", "body": "v2 body content"})
+    v2 = await repo.create_draft_version(
+        draft_id=draft_id,
+        data={
+            "title": "v2 title",
+            "body": "v2 body content",
+            "summary": "v2 summary",
+            "hashtags": ["#v2"],
+            "generation_meta": {"model": "m2"},
+            "output_hash": "h_v2",
+        },
+    )
+    assert v2 == 2
+
+    versions = await repo.list_draft_versions(draft_id)
+    assert len(versions) == 2
+    assert versions[0]["version_no"] == 2
+
+    ok = await repo.rollback_draft_to_version(draft_id=draft_id, version_no=1)
+    assert ok is True
+    rolled = await repo.get_draft(draft_id)
+    assert rolled is not None
+    assert rolled["title"] == "v1 title"
+    assert rolled["status"] == "rolled_back"
+
+
+@pytest.mark.asyncio
 async def test_pipeline_run(repo):
     run_id = await repo.create_pipeline_run({
         "trigger_type": "manual",

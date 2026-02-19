@@ -1,5 +1,49 @@
 # CHANGE.md
 
+## v0.1.10 - 2026-02-19
+
+### Added
+- Added template-driven pre-generation constraints to reduce random failures:
+  - platform-specific length/style/rule templates
+  - configurable banned words injection into generation prompts
+- Added generation stage timeout budget + explicit fallback degrade:
+  - primary model timeout/failure now degrades to fallback model in-stage
+  - per-call generation metadata includes backend/model/latency and fallback usage
+- Added post-generation auto quality check + bounded self-repair:
+  - generated drafts are scored on quality/compliance/repetition
+  - automatic repair loop is capped by `GEN_SELF_REPAIR_MAX_ATTEMPTS`
+  - prevents unbounded retry/repair loops
+- Added generation output versioning and rollback support:
+  - `draft_versions` table stores content snapshots + prompt/model/params/hash metadata
+  - API support for version listing and rollback
+- Added publish-stage stability gate:
+  - blocks publication when quality/compliance/repetition thresholds are not met
+  - includes near-duplicate blocking across same publish batch
+
+### Changed
+- `SummarizerAgent` now uses:
+  - constraint templates
+  - timed generation budget
+  - fallback-first degrade on primary failure
+  - self-repair bounded loop
+  - generation metadata attachment (`generation_meta`)
+- `QualityAgent` now computes and persists:
+  - `compliance_score`
+  - `repetition_ratio`
+- `PublisherAgent` now enforces pre-publish gate thresholds.
+- `TrendOrchestrator` now persists generation versions for each saved draft.
+
+### API
+- Added:
+  - `GET /api/v1/content/{draft_id}/versions`
+  - `POST /api/v1/content/{draft_id}/versions/{version_no}/rollback`
+
+### Tests
+- Added/extended regression coverage for:
+  - generation metadata output
+  - draft versioning + rollback
+  - content rollback API 404 behavior
+
 ## v0.1.9 - 2026-02-19
 
 ### Added

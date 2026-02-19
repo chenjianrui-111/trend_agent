@@ -243,6 +243,28 @@ async def get_content(draft_id: str, auth: AuthContext = Depends(get_auth_contex
     return draft
 
 
+@app.get("/api/v1/content/{draft_id}/versions")
+async def list_content_versions(
+    draft_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    auth: AuthContext = Depends(get_auth_context),
+):
+    return await content_store.list_draft_versions(draft_id=draft_id, limit=limit, offset=offset)
+
+
+@app.post("/api/v1/content/{draft_id}/versions/{version_no}/rollback")
+async def rollback_content_version(
+    draft_id: str,
+    version_no: int,
+    auth: AuthContext = Depends(get_auth_context),
+):
+    ok = await content_store.rollback_draft_to_version(draft_id=draft_id, version_no=version_no)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Draft or version not found")
+    return {"success": True, "draft_id": draft_id, "version_no": version_no}
+
+
 @app.put("/api/v1/content/{draft_id}")
 async def update_content(
     draft_id: str,

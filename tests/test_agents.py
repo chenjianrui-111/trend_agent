@@ -99,6 +99,27 @@ class TestSummarizerAgent:
         drafts = result.payload["drafts"]
         assert len(drafts) == 2
 
+    @pytest.mark.asyncio
+    async def test_summarize_contains_generation_metadata(self, sample_categorized_items):
+        mock_llm = MagicMock()
+        mock_llm.generate_sync = AsyncMock(return_value=json.dumps({
+            "title": "符合约束的标题测试内容",
+            "body": "这是一段用于测试的正文内容。" * 120,
+            "summary": "摘要内容",
+            "hashtags": ["#AI"],
+        }))
+
+        agent = SummarizerAgent(mock_llm)
+        msg = AgentMessage(payload={
+            "items": sample_categorized_items[:1],
+            "target_platforms": ["wechat"],
+        })
+        result = await agent.process(msg)
+        drafts = result.payload["drafts"]
+        assert len(drafts) == 1
+        assert "generation_meta" in drafts[0]
+        assert "prompt_hash" in drafts[0]["generation_meta"]
+
 
 class TestQualityAgent:
     @pytest.mark.asyncio

@@ -3,9 +3,10 @@ PublisherAgent - 多平台发布协调 Agent
 """
 
 import asyncio
+import difflib
 import logging
 import time
-from typing import Dict, List
+from typing import Dict, List, Set
 
 from trend_agent.agents.base import BaseAgent
 from trend_agent.models.message import AgentMessage, PublishResult
@@ -33,6 +34,7 @@ class PublisherAgent(BaseAgent):
     def __init__(self):
         super().__init__("publisher")
         self._publishers: Dict[str, BasePublisher] = {}
+        self._published_body_signatures: Set[str] = set()
 
     async def startup(self):
         await super().startup()
@@ -51,8 +53,19 @@ class PublisherAgent(BaseAgent):
         """
         drafts = message.payload.get("drafts", [])
         all_results: List[Dict] = []
+        accepted_texts: List[str] = []
 
         for draft in drafts:
+            gate_ok, gate_reason = self._pass_stability_gate(draft, accepted_texts)
+            if not gate_ok:
+                all_results.append(PublishResult(
+                    draft_id=draft.get("draft_id", ""),
+                    platform=draft.get("target_platform", ""),
+                    success=False,
+                    error=f"stability_gate_blocked: {gate_reason}",
+                ).__dict__)
+                continue
+
             platform = draft.get("target_platform", "")
             publisher = self._publishers.get(platform)
             if not publisher:
@@ -70,6 +83,8 @@ class PublisherAgent(BaseAgent):
                 latency = time.perf_counter() - start
                 obs.record_publish(platform, "success" if result.success else "failed", latency)
                 all_results.append(result.__dict__)
+                if result.success:
+                    accepted_texts.append(self._draft_text(draft))
             except Exception as e:
                 latency = time.perf_counter() - start
                 obs.record_publish(platform, "error", latency)
@@ -84,6 +99,33 @@ class PublisherAgent(BaseAgent):
         self.logger.info("Published %d/%d drafts successfully", success_count, len(drafts))
 
         return message.create_reply("publisher", {"publish_results": all_results})
+
+    def _pass_stability_gate(self, draft: Dict, accepted_texts: List[str]) -> tuple[bool, str]:
+        if not settings.publisher.gate_enabled:
+            return True, ""
+
+        quality_score = float(draft.get("quality_score", 0.0) or 0.0)
+        details = draft.get("quality_details", {}) if isinstance(draft.get("quality_details"), dict) else {}
+        compliance_score = float(details.get("compliance_score", 0.0) or 0.0)
+        repeat_ratio = float(details.get("repeat_ratio", 0.0) or 0.0)
+        if quality_score < float(settings.publisher.gate_min_quality_score):
+            return False, f"quality_score={quality_score:.2f} < {settings.publisher.gate_min_quality_score:.2f}"
+        if compliance_score < float(settings.publisher.gate_min_compliance_score):
+            return False, f"compliance_score={compliance_score:.2f} < {settings.publisher.gate_min_compliance_score:.2f}"
+        if repeat_ratio > float(settings.publisher.gate_max_repeat_ratio):
+            return False, f"repeat_ratio={repeat_ratio:.2f} > {settings.publisher.gate_max_repeat_ratio:.2f}"
+
+        text = self._draft_text(draft)
+        for prev in accepted_texts:
+            near_dup = difflib.SequenceMatcher(None, text, prev).ratio()
+            if near_dup > float(settings.publisher.gate_max_repeat_ratio):
+                return False, f"near_duplicate_ratio={near_dup:.2f}"
+
+        return True, ""
+
+    @staticmethod
+    def _draft_text(draft: Dict) -> str:
+        return f"{draft.get('title', '')}\n{draft.get('body', '')}\n{draft.get('summary', '')}"
 
     async def _publish_with_retry(self, publisher: BasePublisher, draft: Dict) -> PublishResult:
         """Publish with retry logic."""

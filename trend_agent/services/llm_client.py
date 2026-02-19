@@ -464,12 +464,36 @@ class LLMServiceClient:
             model=settings.llm.zhipu_model,
         )
 
-    async def generate_sync(self, prompt: str, max_tokens: int = 2048, **kwargs) -> str:
-        """同步生成，带重试和 fallback"""
+    @staticmethod
+    def _backend_name(backend: LLMBackend) -> str:
+        if isinstance(backend, ZhipuBackend):
+            return "zhipu"
+        if isinstance(backend, OpenAIBackend):
+            return "openai"
+        if isinstance(backend, OllamaBackend):
+            return "ollama"
+        return backend.__class__.__name__.lower()
+
+    @staticmethod
+    def _backend_model(backend: LLMBackend) -> str:
+        return str(getattr(backend, "model", ""))
+
+    async def _generate_with_retries(
+        self,
+        backend: LLMBackend,
+        prompt: str,
+        max_tokens: int,
+        timeout_seconds: Optional[float] = None,
+        **kwargs,
+    ) -> str:
         last_error: Optional[Exception] = None
         for attempt in range(1, self._retry_max + 1):
             try:
-                result = await self.backend.generate_sync(prompt, max_tokens, **kwargs)
+                coro = backend.generate_sync(prompt, max_tokens, **kwargs)
+                if timeout_seconds and timeout_seconds > 0:
+                    result = await asyncio.wait_for(coro, timeout=timeout_seconds)
+                else:
+                    result = await coro
                 return clean_llm_response(result)
             except LLMCallError as e:
                 last_error = e
@@ -477,21 +501,65 @@ class LLMServiceClient:
                     delay = self._retry_delay * (2 ** (attempt - 1)) + random.uniform(0, 0.3)
                     await asyncio.sleep(delay)
                     continue
-                break
+                raise
+            except asyncio.TimeoutError as e:
+                last_error = LLMCallError("llm call timeout", retryable=True, fallback_eligible=True)
+                if attempt < self._retry_max:
+                    delay = self._retry_delay * (2 ** (attempt - 1))
+                    await asyncio.sleep(delay)
+                    continue
+                raise last_error from e
             except Exception as e:
                 last_error = e
-                break
-
-        # fallback
-        if self._fallback:
-            try:
-                logger.warning("Primary LLM failed, trying fallback: %s", last_error)
-                result = await self._fallback.generate_sync(prompt, max_tokens, **kwargs)
-                return clean_llm_response(result)
-            except Exception as fb_err:
-                logger.error("Fallback also failed: %s", fb_err)
-
+                raise
         raise last_error or LLMCallError("LLM generation failed", retryable=False)
+
+    async def generate_sync_with_metadata(
+        self,
+        prompt: str,
+        max_tokens: int = 2048,
+        timeout_seconds: Optional[float] = None,
+        prefer_fallback: bool = False,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """同步生成（带后端选择与元数据）"""
+        attempts: List[tuple[str, LLMBackend]] = []
+        if prefer_fallback and self._fallback:
+            attempts.append(("fallback", self._fallback))
+            attempts.append(("primary", self.backend))
+        else:
+            attempts.append(("primary", self.backend))
+            if self._fallback:
+                attempts.append(("fallback", self._fallback))
+
+        last_error: Optional[Exception] = None
+        for role, backend in attempts:
+            start = time.perf_counter()
+            try:
+                text = await self._generate_with_retries(
+                    backend=backend,
+                    prompt=prompt,
+                    max_tokens=max_tokens,
+                    timeout_seconds=timeout_seconds,
+                    **kwargs,
+                )
+                return {
+                    "text": text,
+                    "backend_role": role,
+                    "backend": self._backend_name(backend),
+                    "model": self._backend_model(backend),
+                    "used_fallback": role == "fallback",
+                    "latency_ms": round((time.perf_counter() - start) * 1000, 2),
+                }
+            except Exception as e:
+                last_error = e
+                continue
+        raise last_error or LLMCallError("LLM generation failed", retryable=False)
+
+    async def generate_sync(self, prompt: str, max_tokens: int = 2048, **kwargs) -> str:
+        """同步生成，带重试和 fallback"""
+        meta = await self.generate_sync_with_metadata(prompt, max_tokens=max_tokens, **kwargs)
+        return str(meta.get("text") or "")
 
     async def generate_stream(self, prompt: str, **kwargs) -> AsyncGenerator[str, None]:
         """流式生成"""

@@ -107,6 +107,28 @@ class ContentDraft(Base):
     updated_at = Column(DateTime, onupdate=_utcnow)
 
 
+class DraftVersion(Base):
+    __tablename__ = "draft_versions"
+
+    id = Column(String(64), primary_key=True, default=_uuid)
+    draft_id = Column(String(64), nullable=False, index=True)
+    version_no = Column(Integer, nullable=False)
+    title = Column(Text, default="")
+    body = Column(Text, default="")
+    summary = Column(Text, default="")
+    hashtags = Column(JSON, default=list)
+    media_urls = Column(JSON, default=list)
+    generation_meta = Column(JSON, default=dict)
+    quality_snapshot = Column(JSON, default=dict)
+    output_hash = Column(String(64), default="", index=True)
+    is_active = Column(Boolean, default=True, index=True)
+    created_at = Column(DateTime, nullable=False, default=_utcnow)
+
+    __table_args__ = (
+        Index("ix_draft_versions_draft_ver", "draft_id", "version_no", unique=True),
+    )
+
+
 class PublishRecord(Base):
     __tablename__ = "publish_records"
 

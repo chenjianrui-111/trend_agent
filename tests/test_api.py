@@ -54,6 +54,13 @@ async def test_list_content_dev_mode(client):
 
 
 @pytest.mark.asyncio
+async def test_content_version_rollback_not_found(client):
+    await content_store.init_db()
+    resp = await client.post("/api/v1/content/non-existent/versions/1/rollback")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_dashboard_stats(client):
     resp = await client.get("/api/v1/dashboard/stats")
     assert resp.status_code == 200

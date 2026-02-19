@@ -14,7 +14,7 @@ from trend_agent.config.settings import settings
 from trend_agent.models.db import (
     Base, TrendSource, CategorizedContent, ContentDraft,
     PublishRecord, PipelineRun, ScheduleConfig, SourceIngestRecord, ScraperState,
-    ParseCache, ParseDeadLetter,
+    ParseCache, ParseDeadLetter, DraftVersion,
 )
 
 logger = logging.getLogger(__name__)
@@ -424,6 +424,89 @@ class ContentRepository:
             session.add(draft)
             await session.commit()
             return draft.id
+
+    async def create_draft_version(
+        self,
+        draft_id: str,
+        data: Dict[str, Any],
+        *,
+        set_active: bool = True,
+    ) -> int:
+        async with self._session_factory() as session:
+            max_ver_stmt = select(func.max(DraftVersion.version_no)).where(DraftVersion.draft_id == draft_id)
+            result = await session.execute(max_ver_stmt)
+            max_ver = result.scalar_one_or_none() or 0
+            version_no = int(max_ver) + 1
+
+            if set_active:
+                await session.execute(
+                    update(DraftVersion)
+                    .where(DraftVersion.draft_id == draft_id, DraftVersion.is_active.is_(True))
+                    .values(is_active=False)
+                )
+
+            row = DraftVersion(
+                draft_id=draft_id,
+                version_no=version_no,
+                title=str(data.get("title") or ""),
+                body=str(data.get("body") or ""),
+                summary=str(data.get("summary") or ""),
+                hashtags=self._to_list(data.get("hashtags")),
+                media_urls=self._to_list(data.get("media_urls")),
+                generation_meta=self._to_dict(data.get("generation_meta")),
+                quality_snapshot=self._to_dict(data.get("quality_snapshot")),
+                output_hash=str(data.get("output_hash") or ""),
+                is_active=bool(set_active),
+            )
+            session.add(row)
+            await session.commit()
+            return version_no
+
+    async def list_draft_versions(self, draft_id: str, limit: int = 50, offset: int = 0) -> List[Dict]:
+        async with self._session_factory() as session:
+            stmt = (
+                select(DraftVersion)
+                .where(DraftVersion.draft_id == draft_id)
+                .order_by(DraftVersion.version_no.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+            result = await session.execute(stmt)
+            return [self._row_to_dict(r) for r in result.scalars().all()]
+
+    async def rollback_draft_to_version(self, draft_id: str, version_no: int) -> bool:
+        async with self._session_factory() as session:
+            ver_result = await session.execute(
+                select(DraftVersion).where(
+                    DraftVersion.draft_id == draft_id,
+                    DraftVersion.version_no == int(version_no),
+                )
+            )
+            version = ver_result.scalar_one_or_none()
+            if not version:
+                return False
+
+            draft_result = await session.execute(select(ContentDraft).where(ContentDraft.id == draft_id))
+            draft = draft_result.scalar_one_or_none()
+            if not draft:
+                return False
+
+            draft.title = version.title
+            draft.body = version.body
+            draft.summary = version.summary
+            draft.hashtags = version.hashtags
+            draft.media_urls = version.media_urls
+            draft.status = "rolled_back"
+            draft.updated_at = datetime.now(timezone.utc)
+
+            await session.execute(
+                update(DraftVersion)
+                .where(DraftVersion.draft_id == draft_id)
+                .values(is_active=False)
+            )
+            version.is_active = True
+            await session.commit()
+            return True
 
     async def update_draft(self, draft_id: str, updates: Dict[str, Any]):
         async with self._session_factory() as session:

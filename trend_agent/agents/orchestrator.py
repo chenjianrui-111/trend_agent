@@ -263,7 +263,7 @@ class TrendOrchestrator:
 
         # Persist drafts
         for draft in drafts:
-            await self._content_store.save_draft({
+            draft_id = await self._content_store.save_draft({
                 "source_id": draft.get("source_item_id", ""),
                 "target_platform": draft.get("target_platform", ""),
                 "title": draft.get("title", ""),
@@ -272,8 +272,24 @@ class TrendOrchestrator:
                 "hashtags": draft.get("hashtags", []),
                 "media_urls": draft.get("media_urls", []),
                 "language": draft.get("language", "zh"),
-                "status": "summarized",
+                "status": draft.get("status", "summarized"),
+                "quality_score": float(draft.get("quality_score", 0.0) or 0.0),
+                "quality_details": draft.get("quality_details", {}) if isinstance(draft.get("quality_details"), dict) else {},
             })
+            draft["draft_id"] = draft_id
+            await self._content_store.create_draft_version(
+                draft_id=draft_id,
+                data={
+                    "title": draft.get("title", ""),
+                    "body": draft.get("body", ""),
+                    "summary": draft.get("summary", ""),
+                    "hashtags": draft.get("hashtags", []),
+                    "media_urls": draft.get("media_urls", []),
+                    "generation_meta": draft.get("generation_meta", {}),
+                    "quality_snapshot": draft.get("quality_details", {}),
+                    "output_hash": (draft.get("generation_meta", {}) or {}).get("output_hash", ""),
+                },
+            )
 
         return {
             "drafts": drafts,
@@ -331,7 +347,10 @@ class TrendOrchestrator:
         drafts = state.get("drafts", [])
         publish_results = []
 
-        passed_drafts = [d for d in drafts if d.get("quality_passed")]
+        passed_drafts = [
+            d for d in drafts
+            if d.get("quality_passed") and d.get("status") != "rejected"
+        ]
 
         if self._publisher_agent and passed_drafts:
             msg = AgentMessage(

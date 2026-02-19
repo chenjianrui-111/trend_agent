@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "trend_agent"
+    static_configs:
+      - targets: ["trend-agent:8090"]
+    metrics_path: "/metrics"

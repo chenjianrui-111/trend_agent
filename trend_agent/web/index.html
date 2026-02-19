@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TrendAgent - Dashboard</title>
+    <link rel="stylesheet" href="/web/style.css">
+</head>
+<body>
+    <div id="app">
+        <header class="header">
+            <h1>TrendAgent</h1>
+            <span class="subtitle">热门信息聚合与自动发稿系统</span>
+            <div class="header-actions">
+                <button id="btn-refresh" onclick="refreshDashboard()">刷新</button>
+                <button id="btn-run" onclick="triggerPipeline()">运行管道</button>
+            </div>
+        </header>
+
+        <main class="main">
+            <!-- Stats -->
+            <section class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-sources">-</div>
+                    <div class="stat-label">已抓取来源</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-drafts">-</div>
+                    <div class="stat-label">内容草稿</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-published">-</div>
+                    <div class="stat-label">已发布</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-pipelines">-</div>
+                    <div class="stat-label">管道运行</div>
+                </div>
+            </section>
+
+            <!-- Pipeline Runs -->
+            <section class="section">
+                <h2>最近管道运行</h2>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>触发方式</th>
+                            <th>状态</th>
+                            <th>抓取</th>
+                            <th>发布</th>
+                            <th>时间</th>
+                        </tr>
+                    </thead>
+                    <tbody id="pipeline-runs"></tbody>
+                </table>
+            </section>
+
+            <!-- Content Drafts -->
+            <section class="section">
+                <h2>内容草稿</h2>
+                <div class="filter-bar">
+                    <select id="filter-status" onchange="loadDrafts()">
+                        <option value="">全部状态</option>
+                        <option value="summarized">待审核</option>
+                        <option value="quality_checked">已通过</option>
+                        <option value="published">已发布</option>
+                        <option value="rejected">已拒绝</option>
+                    </select>
+                    <select id="filter-platform" onchange="loadDrafts()">
+                        <option value="">全部平台</option>
+                        <option value="wechat">微信公众号</option>
+                        <option value="xiaohongshu">小红书</option>
+                        <option value="douyin">抖音</option>
+                        <option value="weibo">微博</option>
+                    </select>
+                </div>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>标题</th>
+                            <th>平台</th>
+                            <th>状态</th>
+                            <th>质量分</th>
+                            <th>创建时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="drafts-list"></tbody>
+                </table>
+            </section>
+
+            <!-- Run Pipeline Dialog -->
+            <dialog id="pipeline-dialog">
+                <h3>运行管道</h3>
+                <form method="dialog" onsubmit="submitPipeline(event)">
+                    <label>数据源:</label>
+                    <div class="checkbox-group">
+                        <label><input type="checkbox" name="source" value="twitter" checked> Twitter</label>
+                        <label><input type="checkbox" name="source" value="youtube" checked> YouTube</label>
+                        <label><input type="checkbox" name="source" value="weibo" checked> 微博</label>
+                        <label><input type="checkbox" name="source" value="bilibili"> B站</label>
+                        <label><input type="checkbox" name="source" value="zhihu"> 知乎</label>
+                    </div>
+                    <label>目标平台:</label>
+                    <div class="checkbox-group">
+                        <label><input type="checkbox" name="platform" value="wechat" checked> 微信公众号</label>
+                        <label><input type="checkbox" name="platform" value="xiaohongshu" checked> 小红书</label>
+                        <label><input type="checkbox" name="platform" value="douyin"> 抖音</label>
+                        <label><input type="checkbox" name="platform" value="weibo"> 微博</label>
+                    </div>
+                    <label><input type="checkbox" name="video" id="gen-video"> 生成AI视频</label>
+                    <div class="dialog-actions">
+                        <button type="button" onclick="document.getElementById('pipeline-dialog').close()">取消</button>
+                        <button type="submit" class="btn-primary">开始运行</button>
+                    </div>
+                </form>
+            </dialog>
+        </main>
+    </div>
+
+    <script src="/web/dashboard.js"></script>
+</body>
+</html>

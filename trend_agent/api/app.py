@@ -21,6 +21,7 @@ from trend_agent.api.auth import (
     issue_access_token, register_user,
 )
 from trend_agent.config.settings import settings
+from trend_agent.api.skeleton import router as skeleton_router
 from trend_agent.observability import metrics as obs
 from trend_agent.services.content_store import ContentRepository
 from trend_agent.services.llm_client import LLMServiceClient
@@ -53,6 +54,8 @@ app = FastAPI(
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 if WEB_DIR.exists():
     app.mount("/web", StaticFiles(directory=str(WEB_DIR)), name="web")
+
+app.include_router(skeleton_router)
 
 
 @app.middleware("http")

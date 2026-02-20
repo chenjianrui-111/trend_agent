@@ -1,5 +1,29 @@
 # CHANGE.md
 
+## v0.1.11 - 2026-02-20
+
+### Added
+- Added a new React + TypeScript + Vite frontend workspace under `frontend/`, including:
+  - auth/login flow
+  - dashboard/content/sources pages
+  - reusable publish and layout components
+  - API client wiring and platform constraint helpers
+- Added frontend end-to-end test specs for integration and publish flow:
+  - `frontend/e2e/integration.spec.ts`
+  - `frontend/e2e/publish-flow.spec.ts`
+- Added frontend project tooling and configs:
+  - Vite + React + Tailwind
+  - ESLint + TypeScript config
+  - Playwright config
+
+### Changed
+- Enabled CORS middleware in API for local frontend dev origins:
+  - `http://localhost:5173`
+  - `http://127.0.0.1:5173`
+- Updated frontend ignore rules to exclude Playwright runtime artifacts:
+  - `test-results`
+  - `playwright-report`
+
 ## v0.1.10 - 2026-02-19
 
 ### Added

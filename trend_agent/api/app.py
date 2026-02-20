@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import List, Optional, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -59,6 +60,14 @@ app = FastAPI(
     description="热门信息聚合与跨平台自动发稿系统",
     version="0.1.0",
     lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
